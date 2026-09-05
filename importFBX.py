@@ -26,6 +26,68 @@ try:
 except ImportError:
     HAS_ASSIMP = False
 
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
+
+
+def _iter_instances(scene, meshes):
+    """Yield (name, mesh, matrix) for every mesh instance in the scene graph.
+
+    Mesh vertices are stored in node-local space; each node's transformation
+    places the part in the assembly. Ignoring the node tree imports every part
+    at the origin (exploded assembly), so the world transform is accumulated
+    per instance. Falls back to the flat mesh list when the scene has no node
+    hierarchy.
+    """
+    root = getattr(scene, "rootnode", None)
+    if root is None or not hasattr(root, "children"):
+        for idx, mesh in enumerate(meshes):
+            raw = getattr(mesh, "name", "") or "FBX_Part_{:03d}".format(idx)
+            yield raw, mesh, None
+        return
+
+    identity = np.identity(4, dtype=np.float64) if HAS_NUMPY else None
+    stack = [(root, identity)]
+    while stack:
+        node, parent_tm = stack.pop()
+        world = parent_tm
+        if HAS_NUMPY:
+            local_raw = getattr(node, "transformation", None)
+            if local_raw is not None:
+                try:
+                    world = parent_tm @ np.array(local_raw,
+                                                 dtype=np.float64).reshape(4, 4)
+                except (TypeError, ValueError):
+                    world = parent_tm
+        for mesh in getattr(node, "meshes", None) or []:
+            raw = (getattr(node, "name", "")
+                   or getattr(mesh, "name", "")
+                   or "FBX_Part")
+            yield raw, mesh, world
+        for child in getattr(node, "children", None) or []:
+            stack.append((child, world))
+
+
+def _place_vertices(vertices, matrix):
+    """Apply a 4x4 world transform to an (N, 3) vertex array. Returns the
+    input unchanged when there is nothing to apply."""
+    if matrix is None or not HAS_NUMPY or vertices is None:
+        return vertices
+    try:
+        if np.allclose(matrix, np.identity(4, dtype=np.float64)):
+            return vertices
+        verts = np.asarray(vertices, dtype=np.float64)
+        if verts.ndim != 2 or verts.shape[1] < 3:
+            return vertices
+        hom = np.hstack([verts[:, :3],
+                         np.ones((len(verts), 1), dtype=np.float64)])
+        return (hom @ matrix.T)[:, :3]
+    except (TypeError, ValueError):
+        return vertices
+
 
 def open(filename):
     """Callback for File -> Open. Creates a fresh document."""
@@ -76,25 +138,32 @@ def insert(filename, docname):
             release_scene = lambda: pyassimp.release(scene)
 
         meshes = getattr(scene, "meshes", None) or []
-        if not meshes:
+        instances = list(_iter_instances(scene, meshes))
+        if not instances:
             App.Console.PrintWarning("FBXImporter: No mesh data found in scene.\n")
             return
 
         App.Console.PrintMessage(
-            "Found {} mesh(es). Building FreeCAD objects...\n".format(len(meshes))
+            "Found {} mesh instance(s). Building FreeCAD objects...\n".format(len(instances))
         )
 
         # FreeCAD document transactions ensure clean undo/redo history
         doc.openTransaction("Import FBX")
         transaction_open = True
 
-        for idx, mesh in enumerate(meshes):
-            raw_name = getattr(mesh, "name", "") or "FBX_Part_{:03d}".format(idx)
+        used_names = set()
+        for raw_name, mesh, matrix in instances:
             # FreeCAD object labels can be free-form, but internal names
-            # must be valid; addObject() sanitizes, still strip empties.
-            mesh_name = re.sub(r"[^A-Za-z0-9_]", "_", raw_name).strip("_") or "FBX_Part_{:03d}".format(idx)
+            # must be valid and unique; addObject() sanitizes, still strip empties.
+            base = re.sub(r"[^A-Za-z0-9_]", "_", raw_name).strip("_") or "FBX_Part"
+            mesh_name = base
+            suffix = 0
+            while mesh_name in used_names:
+                suffix += 1
+                mesh_name = "{}_{:03d}".format(base, suffix)
+            used_names.add(mesh_name)
 
-            vertices = mesh.vertices
+            vertices = _place_vertices(mesh.vertices, matrix)
             faces = mesh.faces
 
             facets = []
