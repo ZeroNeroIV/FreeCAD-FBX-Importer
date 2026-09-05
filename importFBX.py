@@ -58,10 +58,23 @@ def insert(filename, docname):
     # 3. Generate normals if the file lacks them (harmless for Mesh::Feature)
     flags = aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_GenNormals
 
+    scene_mgr = None
     scene = None
+    release_scene = None
     transaction_open = False
     try:
-        scene = pyassimp.load(filename, processing=flags)
+        # pyassimp has two APIs across versions:
+        #   4.x: scene = pyassimp.load(...) + pyassimp.release(scene)
+        #   5.x: load() returns a context manager (with ... as scene)
+        # Support both so neither fails silently with an empty scene.
+        scene_mgr = pyassimp.load(filename, processing=flags)
+        if hasattr(scene_mgr, "__enter__"):
+            scene = scene_mgr.__enter__()
+            release_scene = lambda: scene_mgr.__exit__(None, None, None)
+        else:
+            scene = scene_mgr
+            release_scene = lambda: pyassimp.release(scene)
+
         meshes = getattr(scene, "meshes", None) or []
         if not meshes:
             App.Console.PrintWarning("FBXImporter: No mesh data found in scene.\n")
@@ -129,8 +142,8 @@ def insert(filename, docname):
         App.Console.PrintError("FBXImporter failed to parse file: {}\n".format(str(exc)))
         raise
     finally:
-        if scene is not None:
+        if release_scene is not None:
             try:
-                pyassimp.release(scene)
+                release_scene()
             except Exception:
                 pass
