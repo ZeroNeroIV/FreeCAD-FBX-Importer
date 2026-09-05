@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<package format="1" xmlns="https://wiki.freecad.org/Package_Metadata">
+  <name>FBXImporter</name>
+  <description>Native open-source Autodesk FBX mesh importer for FreeCAD.</description>
+  <version>1.0.0</version>
+  <date>2026-09-05</date>
+  <maintainer email="dev@local">Community</maintainer>
+  <license>LGPL-2.1-or-later</license>
+  <url>https://github.com/your-username/FreeCAD-FBX-Importer</url>
+  <content>
+    <workbench>
+      <classname>FBXImporterWorkbench</classname>
+      <subdirectory>./</subdirectory>
+    </workbench>
+  </content>
+</package>
