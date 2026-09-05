@@ -5,7 +5,7 @@
   <version>1.0.0</version>
   <date>2026-09-05</date>
   <maintainer email="dev@local">Community</maintainer>
-  <license>LGPL-2.1-or-later</license>
+  <license>MIT</license>
   <url>https://github.com/your-username/FreeCAD-FBX-Importer</url>
   <content>
     <workbench>
